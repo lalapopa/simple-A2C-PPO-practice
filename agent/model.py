@@ -1,10 +1,19 @@
 from collections import deque
 
 import numpy as np
+import tensorflow as tf
+
+
 
 DEFAULT_RLS_GAMMA = 0.8
 DEFAULT_RLS_COVARIANCE = 1
 DEFAULT_RLS_CONSTANT = True
+
+DEFAULT_HIDDEN_LAYER_SIZE = [6, 6]
+DEFAULT_LR = 1.0
+DEFAULT_ACTIVATION = tf.nn.tanh
+DEFAULT_SESSION_CONFIG = None
+DEFAULT_INCREMENTAL = False
 
 
 class RecursiveLeastSquares:
