@@ -308,7 +308,7 @@ class Agent(BaseAgent):
             feed[self.x_ref_critic] = np.squeeze(reference, axis=2)
         lmbda = self.session.run(self.y_critic, feed_dict=feed)
         lmbda = np.expand_dims(lmbda, axis=1)
-        return lmbda
+        return np.nan_to_num(lmbda)
 
     value_derivative = predict_critic
 
@@ -345,7 +345,8 @@ class Agent(BaseAgent):
         feed = {self.x_actor: np.squeeze(state, axis=2)}
         if reference is not None:
             feed[self.x_ref_actor] = np.squeeze(reference, axis=2)
-        return self.session.run(self.gradient_actor_op, feed_dict=feed)
+        grad_value = self.session.run(self.gradient_actor_op, feed_dict=feed)
+        return np.nan_to_num(grad_value)
 
     def predict_actor(self, state, reference=None):
         # Predict action
@@ -354,7 +355,6 @@ class Agent(BaseAgent):
             feed[self.x_ref_actor] = np.squeeze(reference, axis=2)
         actions = self.session.run(self.y_actor, feed_dict=feed) + self.trim
         return actions
-
     action = predict_actor
 
     def update_actor(self, state, gradient, reference=None, learn_rate=None):
