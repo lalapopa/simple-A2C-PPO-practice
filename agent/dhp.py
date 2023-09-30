@@ -346,7 +346,7 @@ class Agent(BaseAgent):
         if reference is not None:
             feed[self.x_ref_actor] = np.squeeze(reference, axis=2)
         grad_value = self.session.run(self.gradient_actor_op, feed_dict=feed)
-        return np.nan_to_num(grad_value)
+        return grad_value
 
     def predict_actor(self, state, reference=None):
         # Predict action
@@ -355,6 +355,7 @@ class Agent(BaseAgent):
             feed[self.x_ref_actor] = np.squeeze(reference, axis=2)
         actions = self.session.run(self.y_actor, feed_dict=feed) + self.trim
         return actions
+
     action = predict_actor
 
     def update_actor(self, state, gradient, reference=None, learn_rate=None):
