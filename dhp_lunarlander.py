@@ -1,10 +1,13 @@
 import gymnasium as gym
 import matplotlib.pyplot as plt
+import scipy 
+from datetime import datetime 
 import numpy as np
 from tqdm import tqdm
 import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+RUN_TIME = datetime.now().strftime("%y-%m-%d-%H-%M")
 import tensorflow as tf
 
 from agent import model
@@ -38,7 +41,9 @@ def generate_random_excitation(n_samples):
     return array
 
 
-def run_train(agent, ac_model):
+def run_train(env, agent, ac_model, STATE_ERROR_WEIGHTS, TRACKED):
+
+
     X, U, R, C_real = [], [], [], []
     X_pred, C_trained, action_grad, critic_grad = [], [], [], []
     list_F, list_G, list_RLS_cov, e_model = [], [], [], []
@@ -46,14 +51,16 @@ def run_train(agent, ac_model):
     total_steps = 1
     max_episode = 10
     max_steps = 300
+    excitation_steps = 75
     nan_occurs = False
+    excitation_signal = generate_random_excitation(excitation_steps)
     with tqdm(range(max_episode)) as tqdm_it:
         for i in tqdm_it:
             print(f"episode: {i}")
             # init params
             if nan_occurs:
                 break
-            init_condition = env.reset()[0]
+            init_condition = env.reset(seed=0)[0]
             ac_model.reset()
             x = init_condition
             P = np.diag(TRACKED).astype(float)
@@ -80,9 +87,9 @@ def run_train(agent, ac_model):
                     if np.isnan(x_next_pred).any():
                         done = True
                         nan_occurs = True
-                        print("=" * 8, i, j, f"in {episode_steps}", "=" * 8)
-                        print(f"{x_next_pred = }\n{action =}\n{R_sig = }\n{x =}")
-                        print("=" * 20)
+#                        print("=" * 8, i, j, f"in {episode_steps}", "=" * 8)
+#                        print(f"{x_next_pred = }\n{action =}\n{R_sig = }\n{x =}")
+#                        print("=" * 20)
                         break
                     # Cost prediction
                     e = np.matmul(P, x_next_pred - R_sig)
@@ -105,7 +112,7 @@ def run_train(agent, ac_model):
                     )
                     grad_critic = np.clip(grad_critic, -0.5, 0.5)
                     agent.update_critic(
-                        x, reference=R_sig, gradient=grad_critic, learn_rate=lr_critic
+                        x, reference=R_sig, gradient=grad_critic 
                     )
                     # print(f"TOTAL GRAD CRITIC = {grad_critic}")
 
@@ -116,7 +123,7 @@ def run_train(agent, ac_model):
                     #                grad_actor  = np.clip(grad_actor, -0.1, 0.1)
                     # grad_actor  = utils.overactuation_gradient_correction(gradients=grad_actor, actions=action, actions_clipped=action_clipped)
                     agent.update_actor(
-                        x, reference=R_sig, gradient=grad_actor, learn_rate=lr_actor
+                        x, reference=R_sig, gradient=grad_actor, 
                     )
                     j += 1
 
@@ -130,12 +137,11 @@ def run_train(agent, ac_model):
 
                 ### Run environment ###
                 action = agent.action(x, reference=R_sig)
-                if total_steps < 75:
+                if total_steps < excitation_steps:
                     action += excitation_signal[total_steps]
                 action = np.clip(action, np.array([0, -1.0]), np.array([1.0, 1.0]))
 
                 x_next, reward, _, _, _ = env.step(np.squeeze(action))
-                print(f"next value {x_next}")
 
                 total_steps += 1
                 episode_steps += 1
@@ -163,109 +169,137 @@ def run_train(agent, ac_model):
                     x_next[-1] or x_next[-2] or episode_steps >= max_steps
                 ):  # break loop when legs are touching ground
                     done = True
-                    print("DONE")
+                    # print("DONE")
+    return X, U, U_ref, critic_grad, action_grad, C_real, C_trained, total_steps, R
 
+def plot_result(X, U, U_ref, critic_grad, action_grad, C_real, C_trained, R, name):
+    _, axis = plt.subplots(4, 3, figsize=(14, 10))
+    axis[0, 0].plot([i[0] for i in X], label="X position")
+    axis[0, 0].plot([i[1] for i in X], label="Y position")
+    # axis[0, 0].plot([np.squeeze(i)[0] for i in X_pred], label="X position (pred)")
+    axis[0, 0].plot([np.squeeze(i)[0] for i in U_ref], "--", label="X position (ref)")
+    # axis[0, 0].plot([np.squeeze(i)[1] for i in X_pred], label="Y position (pred)")
+    axis[0, 0].legend()
 
-TENSORBOARD_DIR = "./logs/tensorboard/DHP/"
+    axis[0, 1].plot([i[2] for i in X], label="V_x speed")
+    axis[0, 1].plot([i[3] for i in X], label="V_y speed")
+    axis[0, 1].plot([np.squeeze(i)[3] for i in U_ref], "--", label="V_y speed (ref)")
+    axis[0, 1].legend()
 
-env = gym.make("LunarLander-v2", continuous=True, render_mode="human")
-init_condition = env.reset()[0]
-state_size = len(init_condition)
-action_size = int(env.action_space.shape[0])
-TRACKED = [True for i in init_condition]
-excitation_signal = generate_random_excitation(75)
+    axis[0, 2].plot([i[4] for i in X], label="angle")
+    axis[0, 2].legend()
 
+    axis[1, 2].plot([i[5] for i in X], label="angular velocity")
+    axis[1, 2].legend()
 
-STATE_ERROR_WEIGHTS = [0.25, 0, 0, 1.5, 10, 1.0, 0, 0]
-lr_critic = 0.01
-lr_actor = 0.001
-gamma_actor = 0.45
+    axis[1, 0].plot([i[6] for i in X], label="left leg")
+    axis[1, 0].plot([i[7] for i in X], label="right leg")
+    axis[1, 0].legend()
 
-ac_kwargs = {
-    # Arguments for all model types
+    axis[1, 1].plot([i[0] for i in U], label="main thrust")
+    axis[1, 1].plot([i[1] for i in U], label="lat thrust")
+    axis[1, 1].legend()
+
+    axis[2, 0].plot(C_real, label="cost_real")
+    axis[2, 0].plot(C_trained, label="cost_predicted")
+    axis[2, 0].legend()
+
+    axis[2, 1].plot([np.squeeze(i) for i in critic_grad], label="critic grad")
+    axis[2, 1].legend()
+    axis[3, 1].plot([np.squeeze(i) for i in action_grad], label="actor grad")
+    axis[3, 1].legend()
+
+    axis[2, 2].plot(R, label="Reward")
+    axis[2, 2].legend()
+
+    plt.savefig(f"./logs/{name}")
+
+def string_from_list(arr):
+    string_value = ' '.join(str(i).replace(".", "_") for i in arr)
+    return string_value
+
+def init_models(hyper_params, weights):
+    TENSORBOARD_DIR = "./logs/tensorboard/DHP/"
+    state_size = hyper_params.get("state_size")
+    action_size = hyper_params.get("action_size")
+    lr_critic = hyper_params.get("lr_critic")
+    lr_actor= hyper_params.get("lr_actor")
+    gamma_actor = hyper_params.get("gamma_actor")
+    tracked = hyper_params.get("TRACKED")
+    ac_kwargs = {
+        # Arguments for all model types
+        "state_size": state_size,
+        "action_size": action_size,
+        "predict_delta": False,
+        # Neural Network specific args:
+        "hidden_layer_size": [100, 100, 100],
+        "activation": tf.nn.relu,
+        # RLS specific args:
+        "gamma": 0.9995,
+        "covariance": 100,
+        "constant": True,
+        # LS specific args:
+        "buffer_length": 10,
+    }
+    ac_model = model.RecursiveLeastSquares(**ac_kwargs)
+
+    kwargs = {
+        "input_size": [
+            state_size,
+            state_size,
+        ],  # [Aircraft state size, Number of tracked states]
+        "output_size": action_size,  # Actor output size (Critic output is dependend only on aircraft state size)
+        "hidden_layer_size": [
+            50,
+            50,
+            50,
+        ],  # List with number of nodes per layer, number of layers is variable
+        "kernel_stddev": 0.1,  # Standard deviation used in the truncated normal distribution to initialize all parameters
+        "lr_critic": lr_critic,  # Learn rate Critic
+        "lr_actor": lr_actor,  # Learn rate Actor
+        "gamma": gamma_actor,  # Discount factor
+        "use_bias": True,  # Use bias terms (only if you train using batched data)
+        "split": False,  # Split architechture of the actor, if False, a single fully connected layer is used.
+        "target_network": False,  # Use target networks
+        "activation": tf.keras.layers.Activation("relu"),
+        "log_dir": TENSORBOARD_DIR,  # Where to save checkpoints
+        "use_delta": (
+            True,
+            tracked,
+        ),  # (True, TRACKED) used 's = [x, (x - x_ref)]' || (False, None) uses 's = [x, x_ref]'
+    }
+    agent = DHP.Agent(**kwargs)
+    return agent, ac_model
+
+def init_env():
+    env = gym.make("LunarLander-v2", continuous=True)
+    init_condition = env.reset(seed=0)[0]
+    state_size = len(init_condition)
+    action_size = int(env.action_space.shape[0])
+    TRACKED = [True for i in init_condition]
+    return state_size, action_size, TRACKED, env
+
+def optimize_fun(weights):
+    state_size, action_size, TRACKED, env = init_env()
+    hyper_params ={
     "state_size": state_size,
     "action_size": action_size,
-    "predict_delta": False,
-    # Neural Network specific args:
-    "hidden_layer_size": [100, 100, 100],
-    "activation": tf.nn.relu,
-    # RLS specific args:
-    "gamma": 0.9995,
-    "covariance": 100,
-    "constant": True,
-    # LS specific args:
-    "buffer_length": 10,
-}
-ac_model = model.RecursiveLeastSquares(**ac_kwargs)
+    "lr_critic": 0.1,
+    "lr_actor": 0.05,
+    "gamma_actor": 0.45,
+    "TRACKED": TRACKED,
+    }
 
-kwargs = {
-    "input_size": [
-        state_size,
-        state_size,
-    ],  # [Aircraft state size, Number of tracked states]
-    "output_size": action_size,  # Actor output size (Critic output is dependend only on aircraft state size)
-    "hidden_layer_size": [
-        100,
-        100,
-        100,
-    ],  # List with number of nodes per layer, number of layers is variable
-    "kernel_stddev": 0.1,  # Standard deviation used in the truncated normal distribution to initialize all parameters
-    "lr_critic": lr_critic,  # Learn rate Critic
-    "lr_actor": lr_actor,  # Learn rate Actor
-    "gamma": gamma_actor,  # Discount factor
-    "use_bias": False,  # Use bias terms (only if you train using batched data)
-    "split": False,  # Split architechture of the actor, if False, a single fully connected layer is used.
-    "target_network": False,  # Use target networks
-    "activation": tf.keras.layers.Activation("relu"),
-    "log_dir": TENSORBOARD_DIR,  # Where to save checkpoints
-    "use_delta": (
-        True,
-        TRACKED,
-    ),  # (True, TRACKED) used 's = [x, (x - x_ref)]' || (False, None) uses 's = [x, x_ref]'
-}
-agent = DHP.Agent(**kwargs)
+    agent, ac_model = init_models(hyper_params, weights)
+    X, U, U_ref, critic_grad, action_grad, C_real, C_trained, total_steps, R = run_train(env, agent, ac_model, weights, TRACKED)
+
+    plot_name = RUN_TIME + string_from_list(weights) + ".png"
+    plot_result(X, U, U_ref, critic_grad, action_grad, C_real, C_trained, R, plot_name)
+    cost_step = sum(C_real) / total_steps
+    return cost_step
 
 
-cost_step = sum(C_real) / total_steps
-print(f"Deluted cost = {cost_step}, num steps {total_steps}")
+weights = [0, 10, 1, 15, 1, 5, 0, 0]
 
-fig, axis = plt.subplots(4, 3, figsize=(14, 10))
-axis[0, 0].plot([i[0] for i in X], label="X position")
-axis[0, 0].plot([i[1] for i in X], label="Y position")
-# axis[0, 0].plot([np.squeeze(i)[0] for i in X_pred], label="X position (pred)")
-axis[0, 0].plot([np.squeeze(i)[0] for i in U_ref], "--", label="X position (ref)")
-# axis[0, 0].plot([np.squeeze(i)[1] for i in X_pred], label="Y position (pred)")
-axis[0, 0].legend()
-
-axis[0, 1].plot([i[2] for i in X], label="V_x speed")
-axis[0, 1].plot([i[3] for i in X], label="V_y speed")
-axis[0, 1].plot([np.squeeze(i)[3] for i in U_ref], "--", label="V_y speed (ref)")
-axis[0, 1].legend()
-
-axis[0, 2].plot([i[4] for i in X], label="angle")
-axis[0, 2].legend()
-
-axis[1, 2].plot([i[5] for i in X], label="angular velocity")
-axis[1, 2].legend()
-
-axis[1, 0].plot([i[6] for i in X], label="left leg")
-axis[1, 0].plot([i[7] for i in X], label="right leg")
-axis[1, 0].legend()
-
-axis[1, 1].plot([i[0] for i in U], label="main thrust")
-axis[1, 1].plot([i[1] for i in U], label="lat thrust")
-axis[1, 1].legend()
-
-axis[2, 0].plot(C_real, label="cost_real")
-axis[2, 0].plot(C_trained, label="cost_predicted")
-axis[2, 0].legend()
-
-axis[2, 1].plot([np.squeeze(i) for i in critic_grad], label="critic grad")
-axis[2, 1].legend()
-axis[3, 1].plot([np.squeeze(i) for i in action_grad], label="actor grad")
-axis[3, 1].legend()
-
-axis[2, 2].plot(R, label="Reward")
-axis[2, 2].legend()
-
-plt.savefig("result.png")
+cost = optimize_fun(weights)
+print(cost)
